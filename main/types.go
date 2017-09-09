@@ -16,6 +16,7 @@ type Message struct {
 	Date int `json:"date"`
 	Chat Chat `json:"chat"`
 	Text string `json:"text"`
+	Reply_to_message *Message `json:"reply_to_message"`
 }
 
 type User struct {
@@ -33,4 +34,8 @@ type Chat struct {
 	Username string `json:"username"`
 	First_name string `json:"first_name"`
 	Last_name string `json:"last_name"`
+}
+
+type BotAnswer struct {
+	Anwswer string `json:"answer"`
 }

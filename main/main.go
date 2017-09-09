@@ -8,6 +8,8 @@ import (
 	"time"
 	"strconv"
 	"math/rand"
+	"net/url"
+	"strings"
 )
 
 func main() {
@@ -15,11 +17,16 @@ func main() {
 	updatesChannel := make(chan Update)
 
 	go func() {
-		offset := 322245050
+
+		dat, err := ioutil.ReadFile("offset")
+		check(err)
+		offset, err := strconv.Atoi(fmt.Sprint(string(dat)))
+		check(err)
+
 		access_token := "406250013:AAEBBjxkedB_tQi5JQzXmOV-vVg4xEDRSlg"
 		for {
 			time.Sleep(time.Second)
-			request, err := http.NewRequest("GET", "https://api.telegram.org/bot"+access_token+"/"+"getUpdates?offset="+strconv.Itoa(offset), nil)
+			request, err := http.NewRequest("GET", "https://api.telegram.org/bot"+access_token+"/"+"getUpdates?offset="+strconv.Itoa(offset)+"&timeout=10", nil)
 			if err != nil {
 				fmt.Println(err)
 				continue
@@ -32,80 +39,100 @@ func main() {
 				continue
 			}
 
+			var updateResponse UpdateResponse
+
+			result := make([]byte, 16777216)
+			cur := 0;
 			buf := make([]byte, 32768)
-			for {
-				n, err := response.Body.Read(buf)
 
-				if err == nil || fmt.Sprint(err) == "EOF" {
-					if n == 0 {
-						break
-					}
-					var updateResponse UpdateResponse
-					json.Unmarshal(buf[:n], &updateResponse)
+			n, err := response.Body.Read(buf)
+			for ; !(err != nil && n == 0); {
 
-					if updateResponse.Ok {
-						updates := updateResponse.Result
-						for i := 0; i < len(updates); i++ {
-							update := updates[i]
-							offset = update.Update_id + 1
-							updatesChannel <- update
-						}
-					}
-				} else {
-					fmt.Println(err)
-					break;
+				for i := cur; i < cur+n; i++ {
+					result[i] = buf[i-cur]
+				}
+				cur += n;
+				n, err = response.Body.Read(buf)
+			}
+
+			json.Unmarshal(result[:cur], &updateResponse)
+			if updateResponse.Ok {
+				updates := updateResponse.Result
+				for i := 0; i < len(updates); i++ {
+					update := updates[i]
+					offset = update.Update_id + 1
+
+					d1 := []byte(strconv.Itoa(offset))
+					err := ioutil.WriteFile("offset", d1, 0644)
+					check(err)
+
+					updatesChannel <- update
 				}
 			}
+
+			defer response.Body.Close()
 		}
 	}()
 
+	ml := make(map[string][]string)
 
-	s1 := rand.NewSource(time.Now().UnixNano())
-	r1 := rand.New(s1)
+
+
 
 	for {
 		update := <-updatesChannel
 
+		if update.Message.Reply_to_message != nil {
+			tokens := strings.Split(strings.ToLower(update.Message.Reply_to_message.Text), " ")
+			for i := 0; i < len(tokens); i++ {
+				if ml[tokens[i]] == nil {
+					ml[tokens[i]] = []string{update.Message.Text}
+				} else {
+					ml[tokens[i]] = append(ml[tokens[i]], update.Message.Text)
+				}
+			}
+		}
 
-
+		s1 := rand.NewSource(time.Now().UnixNano())
+		r1 := rand.New(s1)
 		if r1.Intn(101) > 10 {
 			continue
 		}
 
-		var text string
-		phrase := r1.Intn(3)
-		if phrase == 0{
-			text = "Эх, Ангелиночка..."
-		} else if phrase == 1{
-			text = "Эх, Таечка..."
-		} else {
-			text = "ФУ, ДИАНА"
+
+		text := "+"
+
+		tokens := strings.Split(strings.ToLower(update.Message.Text), " ")
+		token := tokens[0]
+		for i := 0; i < len(tokens) ; i++ {
+			if (ml[tokens[i]] != nil) {
+				token = tokens[i]
+			}
+		}
+		if (ml[token] != nil) {
+			s2 := rand.NewSource(time.Now().UnixNano())
+			r2 := rand.New(s2)
+			text = ml[token][r2.Intn(len(ml[token]))]
 		}
 
-		_, err := executeApiRequest("sendMessage", map[string]string{
-			"chat_id":             strconv.Itoa(update.Message.Chat.Id),
-			"text":                text,
-			"reply_to_message_id": strconv.Itoa(update.Message.Message_id)})
+		_, err := executeApiRequest("sendMessage", url.Values{
+			"chat_id":             {strconv.Itoa(update.Message.Chat.Id)},
+			"text":                {text},
+			"reply_to_message_id": {strconv.Itoa(update.Message.Message_id)}})
 
 		if err == nil {
-
+			//fmt.Printf("%s", resp)
 		} else {
 			fmt.Println(err)
 		}
 	}
+
 }
 
-func executeApiRequest(methodName string, params map[string]string) ([]byte, error) {
+func executeApiRequest(methodName string, params url.Values) ([]byte, error) {
 	access_token := "406250013:AAEBBjxkedB_tQi5JQzXmOV-vVg4xEDRSlg"
 
-	paramsString := ""
-	if params != nil {
-		for k, v := range params {
-			paramsString += k + "=" + v + "&"
-		}
-	}
-
-	resp, err := http.Get("https://api.telegram.org/bot" + access_token + "/" + methodName + "?" + paramsString)
+	resp, err := http.Get("https://api.telegram.org/bot" + access_token + "/" + methodName + "?" + params.Encode())
 	if err != nil {
 		// handle error
 	}
@@ -113,4 +140,10 @@ func executeApiRequest(methodName string, params map[string]string) ([]byte, err
 	body, err := ioutil.ReadAll(resp.Body)
 
 	return body, err
+}
+
+func check(e error) {
+	if e != nil {
+		panic(e)
+	}
 }
